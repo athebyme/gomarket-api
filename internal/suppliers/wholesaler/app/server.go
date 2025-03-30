@@ -25,6 +25,7 @@ func (s *WholesalerServer) Run() error {
 		return err
 	}
 
+	log.Printf("Preparing migrations now.")
 	migrationApply := []migration.MigrationInterface{
 		&infrastructure.WholesalerSchema{},
 		&infrastructure.MigrationsSchema{},
@@ -38,6 +39,7 @@ func (s *WholesalerServer) Run() error {
 	}
 
 	for _, _migration := range migrationApply {
+		log.Printf("Applying migration: %T\n", _migration)
 		if err := _migration.UpMigration(db); err != nil {
 			log.Printf("Migration failed: %v", err)
 			return err
@@ -180,7 +182,7 @@ func (s *WholesalerServer) Run() error {
 	//if err != nil {
 	//	log.Fatalf("Error populating media table: %s\n", err)
 	//}
-	//// ПОМЕНЯТЬ WRITER !
+	// ПОМЕНЯТЬ WRITER !
 	//sizeRepo := repositories.NewSizeRepository(db, os.Stderr)
 	//err = sizeRepo.Populate()
 	//if err != nil {

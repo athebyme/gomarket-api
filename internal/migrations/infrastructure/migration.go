@@ -20,14 +20,6 @@ func (m *WholesalerProducts) UpMigration(db *sql.DB) error {
 	}
 	query :=
 		`
-		ALTER TABLE wholesaler.products 
-    	ADD COLUMN IF NOT EXISTS core_supplier_id INT 
-        REFERENCES core.suppliers(supplier_id)
-        DEFAULT 1;
-    
-   		CREATE UNIQUE INDEX IF NOT EXISTS wholesaler_products_global_id_idx 
-        ON wholesaler.products(global_id);
-
 		CREATE TABLE IF NOT EXISTS wholesaler.products (
 		global_id INT PRIMARY KEY,
 		model VARCHAR(255),
@@ -47,6 +39,10 @@ func (m *WholesalerProducts) UpMigration(db *sql.DB) error {
 		material VARCHAR(255),
 		package_battery TEXT
 		);
+
+   		CREATE INDEX IF NOT EXISTS wholesaler_products_global_id_idx 
+        ON wholesaler.products(global_id);
+
 		`
 	_, err = db.Exec(query)
 	if err != nil {

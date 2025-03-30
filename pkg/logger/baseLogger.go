@@ -32,7 +32,7 @@ func (l *BaseLogger) Log(format string, v ...interface{}) {
 			log.Printf("failed to write to writer: %v", err)
 		}
 	}
-	log.Print(message) // дублируем в консоль
+	log.Print(message)
 }
 
 func (l *BaseLogger) WithPrefix(extraPrefix string) Logger {
@@ -68,10 +68,8 @@ func (l *BaseLogger) FatalLog(format string, v ...interface{}) {
 	os.Exit(1)
 }
 func (l *BaseLogger) Close() error {
-	// Проверяем, поддерживает ли writer интерфейс io.Closer
 	if closer, ok := l.writer.(io.Closer); ok {
 		return closer.Close()
 	}
-	// Если writer не поддерживает Close, ничего не делаем
 	return nil
 }

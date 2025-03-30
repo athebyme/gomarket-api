@@ -171,7 +171,7 @@ func (r *SizeRepository) GetSizesByIDs(ids []int) ([]models.SizeData, error) {
 
 func (r *SizeRepository) Populate() error {
 	log.Printf("Updating sizes.")
-	productsQuery := `SELECT global_id, dimension FROM wholesaler.products`
+	productsQuery := `SELECT global_id, COALESCE(dimension, '') AS dimension FROM wholesaler.products`
 	rows, err := r.db.Query(productsQuery)
 	if err != nil {
 		return fmt.Errorf("failed to select from wholesaler.products: %w", err)

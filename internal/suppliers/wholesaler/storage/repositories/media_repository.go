@@ -18,40 +18,74 @@ func NewMediaRepository(db *sql.DB) *MediaRepository {
 }
 
 func (r *MediaRepository) Populate() error {
-	log.Printf("Updating media.")
-	rows, err := r.db.Query("SELECT global_id FROM wholesaler.products WHERE global_id NOT IN (SELECT global_id FROM wholesaler.media)")
+	log.Println("Updating media.")
+
+	rows, err := r.db.Query(`
+	SELECT global_id 
+	FROM wholesaler.products 
+	WHERE global_id NOT IN (
+		SELECT global_id FROM wholesaler.media WHERE global_id IS NOT NULL
+	);
+	`)
 	if err != nil {
 		return fmt.Errorf("failed to fetch global_ids: %w", err)
 	}
 	defer rows.Close()
 
+	var productIDs []int
 	for rows.Next() {
-		var globalID int
-		if err := rows.Scan(&globalID); err != nil {
-			log.Fatalf("Failed to scan row: %v", err)
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return fmt.Errorf("failed to scan global_id: %w", err)
 		}
-
-		mediaUrls, err := r.GetMediaSources(false)
-		if err != nil {
-			log.Printf("Failed to get media sources for global_id %d: %v", globalID, err)
-			continue
-		}
-
-		mediaUrlsCensored, err := r.GetMediaSources(true)
-		if err != nil {
-			log.Printf("Failed to get censored media sources for global_id %d: %v", globalID, err)
-			continue
-		}
-
-		_, err = r.db.Exec("INSERT INTO wholesaler.media (global_id, images, images_censored) VALUES ($1, $2, $3)",
-			globalID, pq.Array(mediaUrls), pq.Array(mediaUrlsCensored))
-		if err != nil {
-			log.Printf("Failed to insert media for global_id %d: %v", globalID, err)
-		}
+		productIDs = append(productIDs, id)
 	}
-
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("row iteration error: %w", err)
+	}
+
+	if len(productIDs) == 0 {
+		log.Println("No products found for media update.")
+		return nil
+	}
+
+	// Задаем размер изображений (примерное значение, можно изменить по необходимости)
+	const imageSize = 1200
+
+	// Получаем URL'ы медиа из products (не цензурированные)
+	mediaSources, err := r.GetMediaSourcesByProductIDs(productIDs, false, imageSize)
+	if err != nil {
+		return fmt.Errorf("failed to get media sources: %w", err)
+	}
+
+	// Получаем URL'ы медиа из products (цензурированные)
+	mediaSourcesCensored, err := r.GetMediaSourcesByProductIDs(productIDs, true, imageSize)
+	if err != nil {
+		return fmt.Errorf("failed to get censored media sources: %w", err)
+	}
+
+	// Вставляем данные в таблицу wholesaler.media
+	for _, id := range productIDs {
+		urls := mediaSources[id]
+		censoredUrls := mediaSourcesCensored[id]
+
+		// Если для продукта не найдены URL'ы, пропускаем вставку
+		if len(urls) == 0 {
+			log.Printf("No media URLs found for product %d (non-censored)", id)
+			continue
+		}
+		if len(censoredUrls) == 0 {
+			log.Printf("No media URLs found for product %d (censored)", id)
+			continue
+		}
+
+		_, err = r.db.Exec(`
+			INSERT INTO wholesaler.media (global_id, images, images_censored)
+			VALUES ($1, $2, $3)
+		`, id, pq.Array(urls), pq.Array(censoredUrls))
+		if err != nil {
+			log.Printf("Failed to insert media for product %d: %v", id, err)
+		}
 	}
 
 	log.Println("Media population completed successfully.")
