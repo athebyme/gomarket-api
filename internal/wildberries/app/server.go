@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"golang.org/x/time/rate"
 	"gomarketplace_api/config"
+	"gomarketplace_api/internal/migrations/marketplaces/wb"
 	request2 "gomarketplace_api/internal/wildberries/business/models/dto/request"
 	"gomarketplace_api/internal/wildberries/business/models/dto/response"
 	"gomarketplace_api/internal/wildberries/business/services"
@@ -12,9 +13,9 @@ import (
 	"gomarketplace_api/internal/wildberries/business/services/parse"
 	update2 "gomarketplace_api/internal/wildberries/business/services/update"
 	"gomarketplace_api/internal/wildberries/business/services/update/operations/domain"
+	"gomarketplace_api/internal/wildberries/business/services/update/providers_impl"
 	clients2 "gomarketplace_api/internal/wildberries/pkg/clients"
 	"gomarketplace_api/internal/wildberries/storage"
-	"gomarketplace_api/migrations/marketplaces/wb"
 	"gomarketplace_api/pkg/business/service"
 	"gomarketplace_api/pkg/dbconnect"
 	"gomarketplace_api/pkg/dbconnect/migration"
@@ -98,14 +99,14 @@ func (s *WildberriesServer) Run() {
 	//
 	//time.Sleep(5 * time.Second)
 	//
-	//_, err = s.cardUpdateService.UpdateDBNomenclatures(request2.Settings{
-	//	Sort:   request2.Sort{Ascending: false},
-	//	Filter: request2.Filter{WithPhoto: -1, TagIDs: []int{}, TextSearch: "", AllowedCategoriesOnly: true, ObjectIDs: []int{}, Brands: []string{}, ImtID: 0},
-	//	Cursor: request2.Cursor{Limit: 10000},
-	//}, "")
-	//if err != nil {
-	//	return
-	//}
+	_, err = s.cardUpdateService.UpdateDBNomenclatures(request2.Settings{
+		Sort:   request2.Sort{Ascending: false},
+		Filter: request2.Filter{WithPhoto: -1, TagIDs: []int{}, TextSearch: "", AllowedCategoriesOnly: true, ObjectIDs: []int{}, Brands: []string{}, ImtID: 0},
+		Cursor: request2.Cursor{Limit: 10000},
+	}, "")
+	if err != nil {
+		return
+	}
 
 	//count, err := s.cardUpdateService.CheckSearchEngine(request2.Settings{
 	//	Sort:   request2.Sort{Ascending: false},
@@ -118,7 +119,7 @@ func (s *WildberriesServer) Run() {
 	//
 	//log.Printf("Search engine found %d nm's", count)
 
-	s.updateMediaFiles("http://localhost:8081")
+	//s.updateMediaFiles("http://localhost:8081")
 }
 
 func (s *WildberriesServer) updateMediaFiles(wsClientUrl string) {
@@ -226,7 +227,12 @@ func (s *WildberriesServer) uploadProducts(ctx context.Context, auth services.Au
 	repo := storage.NewNomenclatureRepository(db)
 
 	nmService := update2.NewNomenclatureService(*engine, *repo)
-	cardService := update2.NewCardService(wsUrl, textService, s.writer, s.WildberriesConfig)
+
+	// TODO : вынести
+
+	whProvider := providers_impl.NewWbWholesalerAdapter(wsUrl, s.log)
+
+	cardService := update2.NewCardService(textService, s.writer, s.WildberriesConfig, whProvider)
 
 	accuracy := float32(0.3)
 	result, err := nmService.GetSetOfUncreatedItemsWithCategories(accuracy, true, categoryID)

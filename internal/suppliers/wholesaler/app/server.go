@@ -2,7 +2,7 @@ package app
 
 import (
 	"context"
-	"gomarketplace_api/migrations/infrastructure"
+	"gomarketplace_api/internal/migrations/infrastructure"
 	"gomarketplace_api/pkg/business/service/csv_to_postgres"
 	"gomarketplace_api/pkg/dbconnect"
 	"gomarketplace_api/pkg/dbconnect/migration"
@@ -18,12 +18,12 @@ func NewWServer(dbCon dbconnect.Database) *WholesalerServer {
 	return &WholesalerServer{dbCon}
 }
 
-func (s *WholesalerServer) Run() {
+func (s *WholesalerServer) Run() error {
 	var db, err = s.Connect()
 	if err != nil {
 		log.Printf("Error connecting to PostgreSQL: %s\n", err)
+		return err
 	}
-	defer db.Close()
 
 	migrationApply := []migration.MigrationInterface{
 		&infrastructure.WholesalerSchema{},
@@ -39,7 +39,8 @@ func (s *WholesalerServer) Run() {
 
 	for _, _migration := range migrationApply {
 		if err := _migration.UpMigration(db); err != nil {
-			log.Fatalf("Migration failed: %v", err)
+			log.Printf("Migration failed: %v", err)
+			return err
 		}
 	}
 	log.Println("Wholesaler migrations applied successfully!")
@@ -68,11 +69,18 @@ func (s *WholesalerServer) Run() {
 		csvProc,
 		postgresUpd)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*20)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute*1)
 	defer cancel()
 
-	if err := csvUpdater.Execute(ctx, nil, db, ""); err != nil {
-		log.Fatalf("Ошибка обновления: %v", err)
+	config := csv_to_postgres.UpdateConfig{
+		ForeignKeys:      nil,
+		OnConflictAction: "NOTHING",
+		ConflictColumns:  []string{"global_id"},
+	}
+
+	if err := csvUpdater.Execute(ctx, nil, db, "", config); err != nil {
+		log.Printf("Ошибка обновления: %v", err)
+		return err
 	}
 	// ---------------------------------------------------
 
@@ -84,11 +92,23 @@ func (s *WholesalerServer) Run() {
 		SetNewCSVUrl("http://sexoptovik.ru/files/all_prod_prices.csv").
 		SetNewLastModCol("last_update_prices")
 
-	ctx, cancel = context.WithTimeout(context.Background(), time.Second*20)
+	ctx, cancel = context.WithTimeout(context.Background(), time.Minute*1)
 	defer cancel()
 
-	if err := csvUpdater.Execute(ctx, []string{"global_id", "price"}, db, ""); err != nil {
-		log.Fatalf("Ошибка обновления: %v", err)
+	config = csv_to_postgres.UpdateConfig{
+		ForeignKeys: []csv_to_postgres.ForeignKey{
+			{
+				ReferenceTable:  "products",
+				ReferenceColumn: "global_id",
+				Columns:         []string{"global_id"},
+			},
+		},
+		OnConflictAction: "UPDATE SET price = EXCLUDED.price",
+		ConflictColumns:  []string{"global_id"},
+	}
+	if err := csvUpdater.Execute(ctx, []string{"global_id", "price"}, db, "", config); err != nil {
+		log.Printf("Ошибка обновления: %v", err)
+		return err
 	}
 	// ---------------------------------------------------
 
@@ -101,29 +121,57 @@ func (s *WholesalerServer) Run() {
 		SetNewCSVUrl("http://sexoptovik.ru/files/all_prod_prices__.csv").
 		SetNewLastModCol("last_update_stocks")
 
-	ctx, cancel = context.WithTimeout(context.Background(), time.Second*20)
+	ctx, cancel = context.WithTimeout(context.Background(), time.Minute*1)
 	defer cancel()
 
-	if err := csvUpdater.Execute(ctx, []string{"global_id", "stocks"}, db, ""); err != nil {
-		log.Fatalf("Ошибка обновления: %v", err)
+	config = csv_to_postgres.UpdateConfig{
+		ForeignKeys: []csv_to_postgres.ForeignKey{
+			{
+				ReferenceTable:  "products",
+				ReferenceColumn: "global_id",
+				Columns:         []string{"global_id"},
+			},
+		},
+		OnConflictAction: "UPDATE SET stocks = EXCLUDED.stocks",
+		ConflictColumns:  []string{"global_id"},
+	}
+
+	if err := csvUpdater.Execute(ctx, []string{"global_id", "stocks"}, db, "", config); err != nil {
+		log.Printf("Ошибка обновления: %v", err)
+		return err
 	}
 	// ---------------------------------------------------
 
 	// ------------------ descriptions update ------------------
 	csvProc.SetNewColumnNaming([]string{"global_id", "product_description"})
-	postgresUpd.SetNewTableName("stocks").SetNewColumnNaming([]string{"global_id", "product_description"})
+	postgresUpd.SetNewTableName("descriptions").SetNewColumnNaming([]string{"global_id", "product_description"})
 
 	csvUpdater.
 		SetNewInfUrl("http://sexoptovik.ru/files/all_prod_info.inf").
 		SetNewCSVUrl("http://www.sexoptovik.ru/files/all_prod_d33_.csv").
 		SetNewLastModCol("last_update_description")
 
-	ctx, cancel = context.WithTimeout(context.Background(), time.Second*20)
+	ctx, cancel = context.WithTimeout(context.Background(), time.Minute*1)
 	defer cancel()
 
-	if err := csvUpdater.Execute(ctx, []string{"global_id", "product_description"}, db, ""); err != nil {
-		log.Fatalf("Ошибка обновления: %v", err)
+	config = csv_to_postgres.UpdateConfig{
+		ForeignKeys: []csv_to_postgres.ForeignKey{
+			{
+				ReferenceTable:  "products",
+				ReferenceColumn: "global_id",
+				Columns:         []string{"global_id"},
+			},
+		},
+		OnConflictAction: "NOTHING",
+		ConflictColumns:  []string{"global_id"},
 	}
+
+	if err := csvUpdater.Execute(ctx, []string{"global_id", "product_description"}, db, "", config); err != nil {
+		log.Printf("Ошибка обновления: %v", err)
+		return err
+	}
+
+	return nil
 	// ---------------------------------------------------
 
 	// ------------------ обновления с инициализацией репо ------------------

@@ -132,7 +132,7 @@ func (u *Updater) getStoredTime(ctx context.Context, db *sql.DB) (time.Time, err
 }
 
 // Execute выполняет процесс обновления, если это необходимо.
-func (u *Updater) Execute(ctx context.Context, renaming []string, db *sql.DB, timeFormat string) error {
+func (u *Updater) Execute(ctx context.Context, renaming []string, db *sql.DB, timeFormat string, config UpdateConfig) error {
 	if timeFormat == "" {
 		timeFormat = "2006-01-02 15:04:05"
 	}
@@ -153,7 +153,7 @@ func (u *Updater) Execute(ctx context.Context, renaming []string, db *sql.DB, ti
 			return err
 		}
 		defer body.Close()
-		dbCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+		dbCtx, cancel := context.WithTimeout(ctx, 4*time.Minute)
 		defer cancel()
 
 		convertedData, headers, err := u.CSVProcessor.ProcessCSV(body, renaming)
@@ -162,7 +162,7 @@ func (u *Updater) Execute(ctx context.Context, renaming []string, db *sql.DB, ti
 		}
 
 		u.DBUpdater.SetNewColumnNaming(headers)
-		if err := u.DBUpdater.UpdateData(convertedData, dbCtx); err != nil {
+		if err := u.DBUpdater.UpdateData(convertedData, dbCtx, config); err != nil {
 			return err
 		}
 		_, err = db.ExecContext(ctx, `

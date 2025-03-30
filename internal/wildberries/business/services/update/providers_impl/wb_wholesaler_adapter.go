@@ -5,12 +5,23 @@ import (
 	"fmt"
 	"gomarketplace_api/internal/suppliers/wholesaler/pkg/requests"
 	"gomarketplace_api/internal/wildberries/pkg/clients"
+	"io"
 	"strconv"
 	"time"
 )
 
 type WbWholesalerAdapter struct {
 	client *clients.WServiceClient
+}
+
+func NewWbWholesalerAdapter(hostUrl string, writer io.Writer) *WbWholesalerAdapter {
+	client, err := clients.NewWServiceClient(hostUrl, writer)
+	if err != nil {
+		return nil
+	}
+	return &WbWholesalerAdapter{
+		client: client,
+	}
 }
 
 func (wa *WbWholesalerAdapter) GetIds(ctx context.Context) (map[int]struct{}, error) {

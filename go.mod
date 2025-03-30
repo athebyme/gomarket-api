@@ -6,8 +6,8 @@ require github.com/lib/pq v1.10.9
 
 require (
 	github.com/golang-jwt/jwt/v4 v4.5.1
+	github.com/google/uuid v1.6.0
 	github.com/prometheus/client_golang v1.20.5
-	golang.org/x/crypto v0.32.0
 	golang.org/x/text v0.21.0
 	golang.org/x/time v0.7.0
 	gopkg.in/yaml.v3 v3.0.1

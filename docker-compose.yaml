@@ -28,6 +28,7 @@ services:
       - pgdata2:/var/lib/postgresql/data
     networks:
       - goapp-network
+
   postgres3:
     image: postgres:14
     container_name: wisteria

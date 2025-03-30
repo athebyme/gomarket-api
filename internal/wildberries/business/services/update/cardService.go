@@ -39,7 +39,7 @@ func NewCardService(
 	writer io.Writer,
 	wildberriesConfig config.WildberriesConfig,
 	dataProvider DataProvider) *CardService {
-	_log := logger.NewLogger(writer, "[CardService]")
+	_log := logger.NewLogger(writer, "[ CardService ]")
 	cardBuilder := parse2.NewCardBuilderEngine(writer, wildberriesConfig.WbValues)
 
 	return &CardService{
@@ -57,7 +57,7 @@ func (s *CardService) Prepare(ctx context.Context, ids []int) (interface{}, erro
 	preparationsContext, cancel := context.WithTimeout(ctx, time.Minute*2)
 	defer cancel()
 
-	preparationLogger := s.Logger.WithPrefix("[Preparation stage] ")
+	preparationLogger := s.Logger.WithPrefix("[ Preparation stage ] ")
 	startTime := time.Now()
 
 	var filtered sync.Map

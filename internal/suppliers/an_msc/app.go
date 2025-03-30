@@ -123,8 +123,14 @@ func (m *AnManager) Run() error {
 		csvProc,
 		postgresUpd)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*60)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute*2)
 	defer cancel()
+
+	config := csv_to_postgres.UpdateConfig{
+		ForeignKeys:      nil,
+		OnConflictAction: "NOTHING",
+		ConflictColumns:  []string{"code"},
+	}
 
 	if err := csvUpdater.Execute(ctx, []string{"code", "article",
 		"title", "group_code", "group_title", "tmn", "msk", "nsk", "start_price",
@@ -135,7 +141,7 @@ func (m *AnManager) Run() error {
 		"brand_title", "created", "three_d", "width_packed", "height_packed", "length_packed",
 		"weight_packed", "modification_code", "images", "retail_price", "kdr", "category_new_code",
 		"category_new_title", "embed3d", "minsk", "ast", "barcodes", "retail_price_minsk",
-		"marked"}, m.db, "02.01.06 15:04:05"); err != nil {
+		"marked"}, m.db, "02.01.06 15:04:05", config); err != nil {
 		log.Fatalf("Ошибка обновления: %v", err)
 	}
 
