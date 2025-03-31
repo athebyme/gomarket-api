@@ -1,5 +1,7 @@
 package interfaces
 
+import "gomarketplace_api/internal/infrastructure/transactions/options"
+
 // Transaction определяет интерфейс для работы с конкретной транзакцией
 type Transaction interface {
 	// Commit фиксирует транзакцию
@@ -18,7 +20,7 @@ type Transaction interface {
 	GetTenantID() string
 
 	// GetIsolationLevel возвращает уровень изоляции транзакции
-	GetIsolationLevel() IsolationLevel
+	GetIsolationLevel() options.IsolationLevel
 
 	// IsReadOnly проверяет, является ли транзакция транзакцией только для чтения
 	IsReadOnly() bool

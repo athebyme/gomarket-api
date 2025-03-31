@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  postgres1:
+  bananzza-postgres:
     image: postgres:14
     container_name: bananzza
     environment:
@@ -15,7 +15,7 @@ services:
     networks:
       - goapp-network
 
-  postgres2:
+  lasciva-postgres:
     image: postgres:14
     container_name: lasciva
     environment:
@@ -29,7 +29,7 @@ services:
     networks:
       - goapp-network
 
-  postgres3:
+  wisteria-postgres:
     image: postgres:14
     container_name: wisteria
     environment:
@@ -43,14 +43,15 @@ services:
     networks:
       - goapp-network
 
-  adminer:
-    image: adminer
-    container_name: adminer_container
-    restart: always
-    ports:
-      - 8080:8080
-    networks:
-      - goapp-network
+  bananzza-gomarket:
+    build: .
+    restart: on-failure
+    depends_on:
+      bananzza-postgres:
+        condition: service_healthy
+    env_file:
+      - env/bananzza.env
+
 
 volumes:
   pgdata1:

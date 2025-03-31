@@ -9,13 +9,12 @@ type DatabaseConfig interface {
 	GetConnectionString() string
 }
 
-// PostgresConfig represents the configuration needed to connect to a PostgreSQL database
 type PostgresConfig struct {
-	Host     string `yaml:"host"`
-	Port     string `yaml:"port"`
-	User     string `yaml:"username"`
-	Password string `yaml:"password"`
-	DBName   string `yaml:"db_name"`
+	Host     string `yaml:"host" env:"POSTGRES_HOST"`
+	Port     string `yaml:"port" env:"POSTGRES_PORT"`
+	User     string `yaml:"username" env:"POSTGRES_USER"`
+	Password string `yaml:"password" env:"POSTGRES_PASSWORD"`
+	DBName   string `yaml:"db_name" env:"POSTGRES_NAME"`
 }
 
 func (pc *PostgresConfig) GetConnectionString() string {
@@ -23,7 +22,6 @@ func (pc *PostgresConfig) GetConnectionString() string {
 		pc.Host, pc.Port, pc.User, pc.Password, pc.DBName)
 }
 
-// NewPostgresConfigFromFlags fetches the Postgres configuration using flags
 func GetPostgresConfig() *PostgresConfig {
 	return &PostgresConfig{
 		Host:     *flag.String("POSTGRES_HOST", "localhost", "Postgres host"),

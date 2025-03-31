@@ -4,12 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"gomarketplace_api/internal/core/ports/core_logger"
+	"gomarketplace_api/internal/core/ports"
+	"gomarketplace_api/internal/infrastructure/transactions/interfaces"
+	"gomarketplace_api/internal/infrastructure/transactions/options"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
-	"gomarketplace_api/internal/infrastructure/transactions"
 )
 
 // контекстный ключ для хранения транзакции
@@ -20,7 +21,7 @@ type PostgresTransaction struct {
 	tx         *sql.Tx
 	id         string
 	tenantID   string
-	isolation  transactions.IsolationLevel
+	isolation  options.IsolationLevel
 	readOnly   bool
 	active     bool
 	createTime time.Time
@@ -31,7 +32,7 @@ type PostgresTransaction struct {
 func NewPostgresTransaction(
 	tx *sql.Tx,
 	tenantID string,
-	isolation transactions.IsolationLevel,
+	isolation options.IsolationLevel,
 	readOnly bool,
 ) *PostgresTransaction {
 	return &PostgresTransaction{
@@ -100,7 +101,7 @@ func (t *PostgresTransaction) GetTenantID() string {
 }
 
 // GetIsolationLevel возвращает уровень изоляции транзакции
-func (t *PostgresTransaction) GetIsolationLevel() transactions.IsolationLevel {
+func (t *PostgresTransaction) GetIsolationLevel() options.IsolationLevel {
 	return t.isolation
 }
 
@@ -117,11 +118,11 @@ func (t *PostgresTransaction) GetSQLTransaction() *sql.Tx {
 // PostgresTransactionManager реализация TransactionManager для PostgreSQL
 type PostgresTransactionManager struct {
 	db     *sql.DB
-	logger core_logger.LoggerPort
+	logger ports.LoggerPort
 }
 
 // NewPostgresTransactionManager создает новый менеджер транзакций PostgreSQL
-func NewPostgresTransactionManager(db *sql.DB, logger core_logger.LoggerPort) *PostgresTransactionManager {
+func NewPostgresTransactionManager(db *sql.DB, logger ports.LoggerPort) *PostgresTransactionManager {
 	return &PostgresTransactionManager{
 		db:     db,
 		logger: logger,
@@ -131,21 +132,21 @@ func NewPostgresTransactionManager(db *sql.DB, logger core_logger.LoggerPort) *P
 // Execute выполняет операцию в транзакции с настройками по умолчанию
 func (m *PostgresTransactionManager) Execute(
 	ctx context.Context,
-	operation transactions.TransactionOperation,
+	operation interfaces.TransactionOperation,
 ) (interface{}, error) {
-	return m.ExecuteWithOptions(ctx, operation, transactions.DefaultTransactionOptions())
+	return m.ExecuteWithOptions(ctx, operation, options.DefaultTransactionOptions())
 }
 
 // ExecuteWithOptions выполняет операцию в транзакции с указанными настройками
 func (m *PostgresTransactionManager) ExecuteWithOptions(
 	ctx context.Context,
-	operation transactions.TransactionOperation,
-	options transactions.TransactionOptions,
+	operation interfaces.TransactionOperation,
+	options options.TransactionOptions,
 ) (interface{}, error) {
 	// Обрабатываем разные случаи поведения распространения
 	if tx, exists := m.GetTransaction(ctx); exists {
 		switch options.PropagationBehavior {
-		case transactions.PropagationRequired, transactions.PropagationSupports:
+		case options.PropagationRequired, transactions.PropagationSupports:
 			// Используем существующую транзакцию
 			return operation(ctx)
 		case transactions.PropagationRequiresNew:
@@ -188,16 +189,16 @@ func (m *PostgresTransactionManager) ExecuteWithOptions(
 // ExecuteWithTenant выполняет операцию в транзакции для указанного арендатора
 func (m *PostgresTransactionManager) ExecuteWithTenant(
 	ctx context.Context,
-	operation transactions.TransactionOperation,
+	operation interfaces.TransactionOperation,
 	tenantID string,
 ) (interface{}, error) {
-	options := transactions.DefaultTransactionOptionsWithTenant(tenantID)
+	options := options.DefaultTransactionOptionsWithTenant(tenantID)
 	return m.ExecuteWithOptions(ctx, operation, options)
 }
 
 // GetTransaction возвращает текущую транзакцию из контекста, если она существует
-func (m *PostgresTransactionManager) GetTransaction(ctx context.Context) (transactions.Transaction, bool) {
-	tx, ok := ctx.Value(txKey{}).(transactions.Transaction)
+func (m *PostgresTransactionManager) GetTransaction(ctx context.Context) (interfaces.Transaction, bool) {
+	tx, ok := ctx.Value(txKey{}).(interfaces.Transaction)
 	return tx, ok
 }
 
@@ -217,8 +218,8 @@ func (m *PostgresTransactionManager) WithTransaction(ctx context.Context, tx tra
 // createAndExecuteTransaction создает новую транзакцию и выполняет операцию
 func (m *PostgresTransactionManager) createAndExecuteTransaction(
 	ctx context.Context,
-	operation transactions.TransactionOperation,
-	options transactions.TransactionOptions,
+	operation interfaces.TransactionOperation,
+	options options.TransactionOptions,
 ) (interface{}, error) {
 	// Устанавливаем уровень изоляции
 	isolationLevel := sql.LevelDefault
@@ -300,8 +301,8 @@ func (m *PostgresTransactionManager) createAndExecuteTransaction(
 // executeWithSavepoint выполняет операцию с использованием точки сохранения
 func (m *PostgresTransactionManager) executeWithSavepoint(
 	ctx context.Context,
-	tx transactions.Transaction,
-	operation transactions.TransactionOperation,
+	tx interfaces.Transaction,
+	operation interfaces.TransactionOperation,
 ) (interface{}, error) {
 	pgTx, ok := tx.(*PostgresTransaction)
 	if !ok {

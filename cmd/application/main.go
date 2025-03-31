@@ -15,12 +15,10 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"runtime"
 	"sync"
 )
 
 func main() {
-	runtime.GOMAXPROCS(6)
 	logger := logger2.NewLogger(os.Stdout, "[MainGoroutine]")
 	logger.Log("\nStarted app\n")
 
