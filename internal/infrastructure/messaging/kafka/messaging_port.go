@@ -393,5 +393,5 @@ func (k *KafkaMessagingPort) Close() error {
 	return nil
 }
 
-// Убедимся, что KafkaMessagingPort реализует интерфейс MessagingPort
+// Удостоверение, что KafkaMessagingPort реализует интерфейс MessagingPort
 var _ ports.MessagingPort = (*KafkaMessagingPort)(nil)

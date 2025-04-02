@@ -306,5 +306,5 @@ func (l *ZapLoggerPort) Sync() error {
 	return l.logger.Sync()
 }
 
-// Убедимся, что ZapLoggerPort реализует интерфейс LoggerPort
+// Удостоверение, что ZapLoggerPort реализует интерфейс LoggerPort
 var _ ports.LoggerPort = (*ZapLoggerPort)(nil)

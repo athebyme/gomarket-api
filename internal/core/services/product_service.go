@@ -34,6 +34,53 @@ type ProdService interface {
 	SyncProductToMarketplace(ctx context.Context, productID string, marketplaceID int, tenantID string) error
 }
 
+// ExtendedProductService расширяет базовый интерфейс ProductService
+type ExtendedProductService interface {
+	ProdService
+
+	// Методы с улучшенной фильтрацией и пагинацией
+
+	// ListProductsWithFilter возвращает список продуктов с учетом структурированного фильтра и пагинации
+	ListProductsWithFilter(ctx context.Context, filter *models.ProductFilter, pagination *models.Pagination, tenantID string) (*models.PagedResult, error)
+
+	// Методы для массовых операций
+
+	// BatchCreateProducts создает несколько продуктов за одну операцию
+	BatchCreateProducts(ctx context.Context, products []*models.Product, tenantID string) (int, error)
+
+	// BatchUpdateProducts обновляет несколько продуктов за одну операцию
+	BatchUpdateProducts(ctx context.Context, products []*models.Product, tenantID string) (int, error)
+
+	// BatchDeleteProducts удаляет несколько продуктов за одну операцию
+	BatchDeleteProducts(ctx context.Context, productIDs []string, tenantID string) (int, error)
+
+	// Методы для работы с историей изменений
+
+	// GetProductHistory возвращает историю изменений продукта
+	GetProductHistory(ctx context.Context, productID string, pagination *models.Pagination, tenantID string) (*models.PagedResult, error)
+
+	// Методы для работы с категориями
+
+	// GetProductCategories возвращает все категории продуктов
+	GetProductCategories(ctx context.Context, tenantID string) ([]*models.ProductCategory, error)
+
+	// GetProductsByCategory возвращает продукты из указанной категории
+	GetProductsByCategory(ctx context.Context, categoryID string, pagination *models.Pagination, tenantID string) (*models.PagedResult, error)
+
+	// Методы для полнотекстового поиска
+
+	// SearchProducts выполняет полнотекстовый поиск по продуктам
+	SearchProducts(ctx context.Context, query string, pagination *models.Pagination, tenantID string) (*models.PagedResult, error)
+
+	// Методы для работы с связанными продуктами
+
+	// GetRelatedProducts возвращает связанные продукты
+	GetRelatedProducts(ctx context.Context, productID string, limit int, tenantID string) ([]*models.Product, error)
+
+	// SetRelatedProducts устанавливает связи между продуктами
+	SetRelatedProducts(ctx context.Context, productID string, relatedIDs []string, tenantID string) error
+}
+
 // ProductService управляет продуктами с использованием транзакционного менеджера
 type ProductService struct {
 	suppliers    map[int]ports.SupplierPort
@@ -427,6 +474,415 @@ func (s *ProductService) SyncProductToMarketplace(ctx context.Context, productID
 		}
 
 		return nil, nil
+	}, tenantID)
+
+	return err
+}
+
+// ImprovedProductService реализует расширенный интерфейс ProductService
+type ImprovedProductService struct {
+	*ProductService
+	extStorage ports.ExtendedStoragePort
+}
+
+// NewImprovedProductService создает новый экземпляр ImprovedProductService
+func NewImprovedProductService(
+	base *ProductService,
+	extStorage ports.ExtendedStoragePort,
+) *ImprovedProductService {
+	return &ImprovedProductService{
+		ProductService: base,
+		extStorage:     extStorage,
+	}
+}
+
+// ListProductsWithFilter возвращает список продуктов с учетом структурированного фильтра и пагинации
+func (s *ImprovedProductService) ListProductsWithFilter(
+	ctx context.Context,
+	filter *models.ProductFilter,
+	pagination *models.Pagination,
+	tenantID string,
+) (*models.PagedResult, error) {
+	result, err := s.txPort.ExecuteInTransactionWithTenant(ctx, func(ctx context.Context, tx ports.TransactionalPorts) (interface{}, error) {
+		// Приводим хранилище к ExtendedStoragePort
+		extStorage, ok := tx.Storage.(ports.ExtendedStoragePort)
+		if !ok {
+			// Если не удалось привести, используем базовый метод с преобразованием моделей
+			s.logger.Warn("Storage не поддерживает ExtendedStoragePort, используем базовый метод")
+
+			// Преобразуем фильтр
+			baseFilters := filter.ToMap()
+
+			// Вызываем базовый метод
+			products, totalCount, err := tx.Storage.ListProducts(ctx, tenantID, baseFilters, pagination.Page, pagination.PageSize)
+			if err != nil {
+				return nil, fmt.Errorf("ошибка получения списка продуктов: %w", err)
+			}
+
+			// Создаем результат
+			pagination.SetTotal(int64(totalCount))
+			return models.NewPagedResult(products, pagination), nil
+		}
+
+		// Используем расширенный метод
+		return extStorage.ListProductsWithFilter(ctx, tenantID, filter, pagination)
+	}, tenantID)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result.(*models.PagedResult), nil
+}
+
+// BatchCreateProducts создает несколько продуктов за одну операцию
+func (s *ImprovedProductService) BatchCreateProducts(
+	ctx context.Context,
+	products []*models.Product,
+	tenantID string,
+) (int, error) {
+	result, err := s.txPort.ExecuteInTransactionWithTenant(ctx, func(ctx context.Context, tx ports.TransactionalPorts) (interface{}, error) {
+		// Приводим хранилище к ExtendedStoragePort
+		extStorage, ok := tx.Storage.(ports.ExtendedStoragePort)
+		if !ok {
+			// Если не удалось привести, создаем продукты по одному
+			createdCount := 0
+			for _, product := range products {
+				if err := tx.Storage.SaveProduct(ctx, product, tenantID); err != nil {
+					s.logger.Error("Ошибка создания продукта",
+						"productId", product.ID,
+						"error", err)
+					continue
+				}
+				createdCount++
+			}
+			return createdCount, nil
+		}
+
+		// Устанавливаем время создания и обновления для всех продуктов
+		now := time.Now()
+		for _, product := range products {
+			product.CreatedAt = now
+			product.UpdatedAt = now
+		}
+
+		// Используем пакетный метод
+		if err := extStorage.BatchSaveProducts(ctx, products, tenantID); err != nil {
+			return 0, fmt.Errorf("ошибка массового создания продуктов: %w", err)
+		}
+
+		// Публикуем событие массового создания продуктов
+		event := map[string]interface{}{
+			"event_type":    "products_batch_created",
+			"tenant_id":     tenantID,
+			"product_count": len(products),
+			"timestamp":     time.Now(),
+		}
+
+		eventJSON, _ := json.Marshal(event)
+		if err := tx.Messaging.PublishForTenant(ctx, "product-events", eventJSON, tenantID); err != nil {
+			s.logger.Warn("Не удалось опубликовать событие массового создания продуктов",
+				"tenantId", tenantID,
+				"error", err)
+		}
+
+		return len(products), nil
+	}, tenantID)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return result.(int), nil
+}
+
+// BatchUpdateProducts обновляет несколько продуктов за одну операцию
+func (s *ImprovedProductService) BatchUpdateProducts(
+	ctx context.Context,
+	products []*models.Product,
+	tenantID string,
+) (int, error) {
+	result, err := s.txPort.ExecuteInTransactionWithTenant(ctx, func(ctx context.Context, tx ports.TransactionalPorts) (interface{}, error) {
+		// Приводим хранилище к ExtendedStoragePort
+		extStorage, ok := tx.Storage.(ports.ExtendedStoragePort)
+		if !ok {
+			// Если не удалось привести, обновляем продукты по одному
+			updatedCount := 0
+			for _, product := range products {
+				// Получаем существующий продукт для проверки и сохранения времени создания
+				existingProduct, err := tx.Storage.GetProduct(ctx, product.ID, tenantID)
+				if err != nil {
+					s.logger.Error("Ошибка получения существующего продукта",
+						"productId", product.ID,
+						"error", err)
+					continue
+				}
+				if existingProduct == nil {
+					s.logger.Error("Продукт для обновления не найден",
+						"productId", product.ID)
+					continue
+				}
+
+				// Сохраняем время создания
+				product.CreatedAt = existingProduct.CreatedAt
+				// Обновляем время обновления
+				product.UpdatedAt = time.Now()
+
+				if err := tx.Storage.SaveProduct(ctx, product, tenantID); err != nil {
+					s.logger.Error("Ошибка обновления продукта",
+						"productId", product.ID,
+						"error", err)
+					continue
+				}
+				updatedCount++
+			}
+			return updatedCount, nil
+		}
+
+		// Обновляем время обновления для всех продуктов
+		now := time.Now()
+		for _, product := range products {
+			product.UpdatedAt = now
+		}
+
+		// Используем пакетный метод
+		if err := extStorage.BatchSaveProducts(ctx, products, tenantID); err != nil {
+			return 0, fmt.Errorf("ошибка массового обновления продуктов: %w", err)
+		}
+
+		// Публикуем событие массового обновления продуктов
+		event := map[string]interface{}{
+			"event_type":    "products_batch_updated",
+			"tenant_id":     tenantID,
+			"product_count": len(products),
+			"timestamp":     time.Now(),
+		}
+
+		eventJSON, _ := json.Marshal(event)
+		if err := tx.Messaging.PublishForTenant(ctx, "product-events", eventJSON, tenantID); err != nil {
+			s.logger.Warn("Не удалось опубликовать событие массового обновления продуктов",
+				"tenantId", tenantID,
+				"error", err)
+		}
+
+		return len(products), nil
+	}, tenantID)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return result.(int), nil
+}
+
+// BatchDeleteProducts удаляет несколько продуктов за одну операцию
+func (s *ImprovedProductService) BatchDeleteProducts(
+	ctx context.Context,
+	productIDs []string,
+	tenantID string,
+) (int, error) {
+	result, err := s.txPort.ExecuteInTransactionWithTenant(ctx, func(ctx context.Context, tx ports.TransactionalPorts) (interface{}, error) {
+		// Приводим хранилище к ExtendedStoragePort
+		extStorage, ok := tx.Storage.(ports.ExtendedStoragePort)
+		if !ok {
+			// Если не удалось привести, удаляем продукты по одному
+			deletedCount := 0
+			for _, productID := range productIDs {
+				if err := tx.Storage.DeleteProduct(ctx, productID, tenantID); err != nil {
+					s.logger.Error("Ошибка удаления продукта",
+						"productId", productID,
+						"error", err)
+					continue
+				}
+
+				// Удаляем из кэша
+				cacheKey := fmt.Sprintf("product:%s", productID)
+				if err := tx.Cache.DeleteWithTenant(ctx, cacheKey, tenantID); err != nil {
+					s.logger.Warn("Не удалось удалить продукт из кэша",
+						"productId", productID,
+						"tenantId", tenantID,
+						"error", err)
+				}
+
+				deletedCount++
+			}
+			return deletedCount, nil
+		}
+
+		// Используем пакетный метод
+		if err := extStorage.BatchDeleteProducts(ctx, productIDs, tenantID); err != nil {
+			return 0, fmt.Errorf("ошибка массового удаления продуктов: %w", err)
+		}
+
+		// Удаляем продукты из кэша
+		for _, productID := range productIDs {
+			cacheKey := fmt.Sprintf("product:%s", productID)
+			if err := tx.Cache.DeleteWithTenant(ctx, cacheKey, tenantID); err != nil {
+				s.logger.Warn("Не удалось удалить продукт из кэша",
+					"productId", productID,
+					"tenantId", tenantID,
+					"error", err)
+			}
+		}
+
+		// Публикуем событие массового удаления продуктов
+		event := map[string]interface{}{
+			"event_type":    "products_batch_deleted",
+			"tenant_id":     tenantID,
+			"product_count": len(productIDs),
+			"timestamp":     time.Now(),
+		}
+
+		eventJSON, _ := json.Marshal(event)
+		if err := tx.Messaging.PublishForTenant(ctx, "product-events", eventJSON, tenantID); err != nil {
+			s.logger.Warn("Не удалось опубликовать событие массового удаления продуктов",
+				"tenantId", tenantID,
+				"error", err)
+		}
+
+		return len(productIDs), nil
+	}, tenantID)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return result.(int), nil
+}
+
+// GetProductHistory возвращает историю изменений продукта
+func (s *ImprovedProductService) GetProductHistory(
+	ctx context.Context,
+	productID string,
+	pagination *models.Pagination,
+	tenantID string,
+) (*models.PagedResult, error) {
+	result, err := s.txPort.ExecuteInTransactionWithTenant(ctx, func(ctx context.Context, tx ports.TransactionalPorts) (interface{}, error) {
+		// Приводим хранилище к ExtendedStoragePort
+		extStorage, ok := tx.Storage.(ports.ExtendedStoragePort)
+		if !ok {
+			return nil, fmt.Errorf("хранилище не поддерживает историю изменений")
+		}
+
+		return extStorage.GetProductHistory(ctx, productID, tenantID, pagination)
+	}, tenantID)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result.(*models.PagedResult), nil
+}
+
+// GetProductCategories возвращает все категории продуктов
+func (s *ImprovedProductService) GetProductCategories(
+	ctx context.Context,
+	tenantID string,
+) ([]*models.ProductCategory, error) {
+	result, err := s.txPort.ExecuteInTransactionWithTenant(ctx, func(ctx context.Context, tx ports.TransactionalPorts) (interface{}, error) {
+		// Приводим хранилище к ExtendedStoragePort
+		extStorage, ok := tx.Storage.(ports.ExtendedStoragePort)
+		if !ok {
+			return nil, fmt.Errorf("хранилище не поддерживает категории продуктов")
+		}
+
+		return extStorage.GetProductCategories(ctx, tenantID)
+	}, tenantID)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result.([]*models.ProductCategory), nil
+}
+
+// GetProductsByCategory возвращает продукты из указанной категории
+func (s *ImprovedProductService) GetProductsByCategory(
+	ctx context.Context,
+	categoryID string,
+	pagination *models.Pagination,
+	tenantID string,
+) (*models.PagedResult, error) {
+	result, err := s.txPort.ExecuteInTransactionWithTenant(ctx, func(ctx context.Context, tx ports.TransactionalPorts) (interface{}, error) {
+		// Приводим хранилище к ExtendedStoragePort
+		extStorage, ok := tx.Storage.(ports.ExtendedStoragePort)
+		if !ok {
+			return nil, fmt.Errorf("хранилище не поддерживает получение продуктов по категории")
+		}
+
+		return extStorage.GetProductsByCategory(ctx, categoryID, tenantID, pagination)
+	}, tenantID)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result.(*models.PagedResult), nil
+}
+
+// SearchProducts выполняет полнотекстовый поиск по продуктам
+func (s *ImprovedProductService) SearchProducts(
+	ctx context.Context,
+	query string,
+	pagination *models.Pagination,
+	tenantID string,
+) (*models.PagedResult, error) {
+	result, err := s.txPort.ExecuteInTransactionWithTenant(ctx, func(ctx context.Context, tx ports.TransactionalPorts) (interface{}, error) {
+		// Приводим хранилище к ExtendedStoragePort
+		extStorage, ok := tx.Storage.(ports.ExtendedStoragePort)
+		if !ok {
+			return nil, fmt.Errorf("хранилище не поддерживает полнотекстовый поиск")
+		}
+
+		return extStorage.SearchProducts(ctx, query, tenantID, pagination)
+	}, tenantID)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result.(*models.PagedResult), nil
+}
+
+// GetRelatedProducts возвращает связанные продукты
+func (s *ImprovedProductService) GetRelatedProducts(
+	ctx context.Context,
+	productID string,
+	limit int,
+	tenantID string,
+) ([]*models.Product, error) {
+	result, err := s.txPort.ExecuteInTransactionWithTenant(ctx, func(ctx context.Context, tx ports.TransactionalPorts) (interface{}, error) {
+		// Приводим хранилище к ExtendedStoragePort
+		extStorage, ok := tx.Storage.(ports.ExtendedStoragePort)
+		if !ok {
+			return nil, fmt.Errorf("хранилище не поддерживает связанные продукты")
+		}
+
+		return extStorage.GetRelatedProducts(ctx, productID, tenantID, limit)
+	}, tenantID)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result.([]*models.Product), nil
+}
+
+// SetRelatedProducts устанавливает связи между продуктами
+func (s *ImprovedProductService) SetRelatedProducts(
+	ctx context.Context,
+	productID string,
+	relatedIDs []string,
+	tenantID string,
+) error {
+	_, err := s.txPort.ExecuteInTransactionWithTenant(ctx, func(ctx context.Context, tx ports.TransactionalPorts) (interface{}, error) {
+		// Приводим хранилище к ExtendedStoragePort
+		extStorage, ok := tx.Storage.(ports.ExtendedStoragePort)
+		if !ok {
+			return nil, fmt.Errorf("хранилище не поддерживает связанные продукты")
+		}
+
+		return nil, extStorage.SaveRelatedProducts(ctx, productID, relatedIDs, tenantID)
 	}, tenantID)
 
 	return err

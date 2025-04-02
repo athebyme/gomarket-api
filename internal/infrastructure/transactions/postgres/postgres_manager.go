@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"gomarketplace_api/internal/core/ports"
+	"gomarketplace_api/internal/infrastructure/transactions"
 	"gomarketplace_api/internal/infrastructure/transactions/interfaces"
 	"gomarketplace_api/internal/infrastructure/transactions/options"
 	"sync"
@@ -141,47 +142,47 @@ func (m *PostgresTransactionManager) Execute(
 func (m *PostgresTransactionManager) ExecuteWithOptions(
 	ctx context.Context,
 	operation interfaces.TransactionOperation,
-	options options.TransactionOptions,
+	opts options.TransactionOptions,
 ) (interface{}, error) {
 	// Обрабатываем разные случаи поведения распространения
 	if tx, exists := m.GetTransaction(ctx); exists {
-		switch options.PropagationBehavior {
-		case options.PropagationRequired, transactions.PropagationSupports:
+		switch opts.PropagationBehavior {
+		case options.PropagationRequired, options.PropagationSupports:
 			// Используем существующую транзакцию
 			return operation(ctx)
-		case transactions.PropagationRequiresNew:
+		case options.PropagationRequiresNew:
 			// Создаем новую транзакцию, игнорируя существующую
-			return m.createAndExecuteTransaction(ctx, operation, options)
-		case transactions.PropagationNested:
+			return m.createAndExecuteTransaction(ctx, operation, opts)
+		case options.PropagationNested:
 			// В PostgreSQL нет настоящих вложенных транзакций,
 			// но мы можем использовать savepoint
 			return m.executeWithSavepoint(ctx, tx, operation)
-		case transactions.PropagationNever:
+		case options.PropagationNever:
 			// Ошибка, если транзакция существует
 			return nil, fmt.Errorf("transaction exists but propagation behavior is NEVER")
-		case transactions.PropagationNotSupported:
+		case options.PropagationNotSupported:
 			// Выполняем вне транзакции
 			return operation(ctx)
-		case transactions.PropagationMandatory:
+		case options.PropagationMandatory:
 			// Транзакция существует, хорошо
 			return operation(ctx)
 		default:
-			return nil, fmt.Errorf("unknown propagation behavior: %d", options.PropagationBehavior)
+			return nil, fmt.Errorf("unknown propagation behavior: %d", opts.PropagationBehavior)
 		}
 	} else {
 		// Транзакция не существует
-		switch options.PropagationBehavior {
-		case transactions.PropagationRequired, transactions.PropagationRequiresNew:
+		switch opts.PropagationBehavior {
+		case options.PropagationRequired, options.PropagationRequiresNew:
 			// Создаем новую транзакцию
-			return m.createAndExecuteTransaction(ctx, operation, options)
-		case transactions.PropagationSupports, transactions.PropagationNotSupported, transactions.PropagationNever:
+			return m.createAndExecuteTransaction(ctx, operation, opts)
+		case options.PropagationSupports, options.PropagationNotSupported, options.PropagationNever:
 			// Выполняем без транзакции
 			return operation(ctx)
-		case transactions.PropagationNested, transactions.PropagationMandatory:
+		case options.PropagationNested, options.PropagationMandatory:
 			// Ошибка, если транзакция не существует
-			return nil, fmt.Errorf("no existing transaction found for propagation behavior %d", options.PropagationBehavior)
+			return nil, fmt.Errorf("no existing transaction found for propagation behavior %d", opts.PropagationBehavior)
 		default:
-			return nil, fmt.Errorf("unknown propagation behavior: %d", options.PropagationBehavior)
+			return nil, fmt.Errorf("unknown propagation behavior: %d", opts.PropagationBehavior)
 		}
 	}
 }
@@ -209,7 +210,7 @@ func (m *PostgresTransactionManager) HasActiveTransaction(ctx context.Context) b
 }
 
 // WithTransaction добавляет транзакцию в контекст
-func (m *PostgresTransactionManager) WithTransaction(ctx context.Context, tx transactions.Transaction) context.Context {
+func (m *PostgresTransactionManager) WithTransaction(ctx context.Context, tx *transactions.Transaction) context.Context {
 	return context.WithValue(ctx, txKey{}, tx)
 }
 
@@ -219,32 +220,34 @@ func (m *PostgresTransactionManager) WithTransaction(ctx context.Context, tx tra
 func (m *PostgresTransactionManager) createAndExecuteTransaction(
 	ctx context.Context,
 	operation interfaces.TransactionOperation,
-	options options.TransactionOptions,
+	opts options.TransactionOptions,
 ) (interface{}, error) {
 	// Устанавливаем уровень изоляции
 	isolationLevel := sql.LevelDefault
-	switch options.IsolationLevel {
-	case transactions.LevelReadUncommitted:
+	switch opts.IsolationLevel {
+	case options.LevelReadUncommitted:
 		isolationLevel = sql.LevelReadUncommitted
-	case transactions.LevelReadCommitted:
+	case options.LevelReadCommitted:
 		isolationLevel = sql.LevelReadCommitted
-	case transactions.LevelRepeatableRead:
+	case options.LevelRepeatableRead:
 		isolationLevel = sql.LevelRepeatableRead
-	case transactions.LevelSerializable:
+	case options.LevelSerializable:
 		isolationLevel = sql.LevelSerializable
+	default:
+		panic("unhandled default case")
 	}
 
 	// Создаем SQL транзакцию с указанным уровнем изоляции и режимом read-only
 	txOptions := &sql.TxOptions{
 		Isolation: isolationLevel,
-		ReadOnly:  options.ReadOnly,
+		ReadOnly:  opts.ReadOnly,
 	}
 
 	// Создаем контекст с таймаутом, если указан
 	var txCtx context.Context
 	var cancel context.CancelFunc
-	if options.Timeout > 0 {
-		txCtx, cancel = context.WithTimeout(ctx, time.Duration(options.Timeout)*time.Second)
+	if opts.Timeout > 0 {
+		txCtx, cancel = context.WithTimeout(ctx, time.Duration(opts.Timeout)*time.Second)
 		defer cancel()
 	} else {
 		txCtx = ctx
@@ -259,17 +262,17 @@ func (m *PostgresTransactionManager) createAndExecuteTransaction(
 	// Создаем объект нашей транзакции
 	tx := NewPostgresTransaction(
 		sqlTx,
-		options.TenantID,
-		options.IsolationLevel,
-		options.ReadOnly,
+		opts.TenantID,
+		opts.IsolationLevel,
+		opts.ReadOnly,
 	)
 
 	// Добавляем транзакцию в контекст
 	txCtx = m.WithTransaction(txCtx, tx)
 
 	// Если арендатор указан, устанавливаем схему для данного арендатора
-	if options.TenantID != "" {
-		_, err := sqlTx.ExecContext(txCtx, fmt.Sprintf("SET LOCAL search_path TO tenant_%s, public", options.TenantID))
+	if opts.TenantID != "" {
+		_, err := sqlTx.ExecContext(txCtx, fmt.Sprintf("SET LOCAL search_path TO tenant_%s, public", opts.TenantID))
 		if err != nil {
 			_ = tx.Rollback()
 			return nil, fmt.Errorf("failed to set tenant schema: %w", err)
