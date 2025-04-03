@@ -4,12 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"gomarketplace_api/internal/infrastructure/transactions/interfaces"
+	"gomarketplace_api/internal/core/ports"
+	"gomarketplace_api/internal/infrastructure/transactional/transactions/interfaces"
 	"strconv"
 	"sync"
 	"time"
-
-	"gomarketplace_api/internal/core/ports"
 )
 
 // CacheEntry представляет запись в кэше с дополнительными метаданными
@@ -21,8 +20,8 @@ type CacheEntry struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
-// ImprovedTransactionalCacheAdapter расширяет базовый TransactionalCacheAdapter
-type ImprovedTransactionalCacheAdapter struct {
+// TransactionalCacheAdapter предоставляет транзакционные возможности для кэша
+type TransactionalCacheAdapter struct {
 	baseCache         ports.CachePort
 	mutex             sync.RWMutex
 	txCache           map[string]map[string]*CacheEntry // map[tx_id]map[cache_key]*CacheEntry
@@ -32,39 +31,21 @@ type ImprovedTransactionalCacheAdapter struct {
 	logger            ports.LoggerPort
 }
 
-// NewImprovedTransactionalCacheAdapter создает новый экземпляр ImprovedTransactionalCacheAdapter
-func NewImprovedTransactionalCacheAdapter(
-	baseCache ports.CachePort,
-	logger ports.LoggerPort,
-	cleanupInterval time.Duration,
-) *ImprovedTransactionalCacheAdapter {
-	adapter := &ImprovedTransactionalCacheAdapter{
+// NewTransactionalCacheAdapter создает новый экземпляр TransactionalCacheAdapter
+func NewTransactionalCacheAdapter(baseCache ports.CachePort) ports.TransactionalCachePort {
+	adapter := &TransactionalCacheAdapter{
 		baseCache:         baseCache,
 		txCache:           make(map[string]map[string]*CacheEntry),
 		txCacheCreateTime: make(map[string]time.Time),
 		txCacheTenantIDs:  make(map[string]string),
-		cleanupInterval:   cleanupInterval,
-		logger:            logger,
+		cleanupInterval:   1 * time.Hour, // По умолчанию
 	}
-
-	// Запускаем периодическую очистку неиспользуемых кэшей
-	go adapter.periodicCleanup()
 
 	return adapter
 }
 
-// periodicCleanup периодически очищает неиспользуемые кэши
-func (a *ImprovedTransactionalCacheAdapter) periodicCleanup() {
-	ticker := time.NewTicker(a.cleanupInterval)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		a.CleanupStaleTxCaches(a.cleanupInterval * 3)
-	}
-}
-
 // WithTransaction возвращает кэш для указанной транзакции
-func (a *ImprovedTransactionalCacheAdapter) WithTransaction(tx interfaces.Transaction) ports.CachePort {
+func (a *TransactionalCacheAdapter) WithTransaction(tx interfaces.Transaction) ports.CachePort {
 	// Создаем кэш для транзакции, если его еще нет
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
@@ -76,7 +57,7 @@ func (a *ImprovedTransactionalCacheAdapter) WithTransaction(tx interfaces.Transa
 		a.txCacheTenantIDs[txID] = tx.GetTenantID()
 	}
 
-	return &ImprovedTransactionalCache{
+	return &TransactionalCache{
 		baseCache: a.baseCache,
 		adapter:   a,
 		txID:      txID,
@@ -85,7 +66,7 @@ func (a *ImprovedTransactionalCacheAdapter) WithTransaction(tx interfaces.Transa
 }
 
 // FlushTransactionCache сбрасывает кэш транзакции в основной кэш
-func (a *ImprovedTransactionalCacheAdapter) FlushTransactionCache(tx interfaces.Transaction) error {
+func (a *TransactionalCacheAdapter) FlushTransactionCache(tx interfaces.Transaction) error {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 
@@ -103,7 +84,7 @@ func (a *ImprovedTransactionalCacheAdapter) FlushTransactionCache(tx interfaces.
 	for key, entry := range txCache {
 		// Пропускаем удаленные записи
 		if entry.Deleted {
-			if err := a.baseCache.DeleteWithTenant(ctx, key, tenantID); err != nil {
+			if err := a.baseCache.DeleteWithTenant(ctx, key, tenantID); err != nil && a.logger != nil {
 				a.logger.Warn("Не удалось удалить ключ из основного кэша",
 					"key", key,
 					"txID", txID,
@@ -125,7 +106,7 @@ func (a *ImprovedTransactionalCacheAdapter) FlushTransactionCache(tx interfaces.
 		}
 
 		// Сохраняем в основной кэш
-		if err := a.baseCache.SetWithTenant(ctx, key, entry.Value, tenantID, expiration); err != nil {
+		if err := a.baseCache.SetWithTenant(ctx, key, entry.Value, tenantID, expiration); err != nil && a.logger != nil {
 			a.logger.Warn("Не удалось сохранить ключ в основной кэш",
 				"key", key,
 				"txID", txID,
@@ -142,7 +123,7 @@ func (a *ImprovedTransactionalCacheAdapter) FlushTransactionCache(tx interfaces.
 }
 
 // RollbackTransactionCache удаляет кэш транзакции без сброса в основной кэш
-func (a *ImprovedTransactionalCacheAdapter) RollbackTransactionCache(tx interfaces.Transaction) error {
+func (a *TransactionalCacheAdapter) RollbackTransactionCache(tx interfaces.Transaction) error {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 
@@ -155,7 +136,7 @@ func (a *ImprovedTransactionalCacheAdapter) RollbackTransactionCache(tx interfac
 }
 
 // CleanupStaleTxCaches очищает неиспользуемые кэши старше указанного возраста
-func (a *ImprovedTransactionalCacheAdapter) CleanupStaleTxCaches(maxAge time.Duration) int {
+func (a *TransactionalCacheAdapter) CleanupStaleTxCaches(maxAge time.Duration) int {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 
@@ -169,17 +150,46 @@ func (a *ImprovedTransactionalCacheAdapter) CleanupStaleTxCaches(maxAge time.Dur
 			delete(a.txCacheTenantIDs, txID)
 			count++
 
-			a.logger.Warn("Очищен устаревший транзакционный кэш",
-				"txID", txID,
-				"age", now.Sub(createTime).String())
+			if a.logger != nil {
+				a.logger.Warn("Очищен устаревший транзакционный кэш",
+					"txID", txID,
+					"age", now.Sub(createTime).String())
+			}
 		}
 	}
 
 	return count
 }
 
+// SetLogger устанавливает логгер для адаптера
+func (a *TransactionalCacheAdapter) SetLogger(logger ports.LoggerPort) {
+	a.logger = logger
+}
+
+// SetCleanupInterval устанавливает интервал очистки неиспользуемых кэшей
+func (a *TransactionalCacheAdapter) SetCleanupInterval(interval time.Duration) {
+	a.cleanupInterval = interval
+}
+
+// StartPeriodicCleanup запускает периодическую очистку неиспользуемых кэшей
+func (a *TransactionalCacheAdapter) StartPeriodicCleanup() {
+	go func() {
+		ticker := time.NewTicker(a.cleanupInterval)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			a.CleanupStaleTxCaches(a.cleanupInterval * 3)
+		}
+	}()
+
+	if a.logger != nil {
+		a.logger.Info("Запущена периодическая очистка транзакционного кэша",
+			"interval", a.cleanupInterval.String())
+	}
+}
+
 // GetStats возвращает статистику по транзакционным кэшам
-func (a *ImprovedTransactionalCacheAdapter) GetStats() map[string]interface{} {
+func (a *TransactionalCacheAdapter) GetStats() map[string]interface{} {
 	a.mutex.RLock()
 	defer a.mutex.RUnlock()
 
@@ -201,21 +211,21 @@ func (a *ImprovedTransactionalCacheAdapter) GetStats() map[string]interface{} {
 	return stats
 }
 
-// ImprovedTransactionalCache реализует транзакционный кэш с расширенными возможностями
-type ImprovedTransactionalCache struct {
+// TransactionalCache реализует интерфейс ports.CachePort для транзакций
+type TransactionalCache struct {
 	baseCache ports.CachePort
-	adapter   *ImprovedTransactionalCacheAdapter
+	adapter   *TransactionalCacheAdapter
 	txID      string
 	tenantID  string
 }
 
 // Get получает значение из кэша по ключу
-func (c *ImprovedTransactionalCache) Get(ctx context.Context, key string) ([]byte, error) {
+func (c *TransactionalCache) Get(ctx context.Context, key string) ([]byte, error) {
 	return c.GetWithTenant(ctx, key, c.tenantID)
 }
 
 // GetWithTenant получает значение из кэша по ключу с учетом ID арендатора
-func (c *ImprovedTransactionalCache) GetWithTenant(ctx context.Context, key string, tenantID string) ([]byte, error) {
+func (c *TransactionalCache) GetWithTenant(ctx context.Context, key string, tenantID string) ([]byte, error) {
 	// Сначала проверяем транзакционный кэш
 	c.adapter.mutex.RLock()
 	txCache, exists := c.adapter.txCache[c.txID]
@@ -244,12 +254,12 @@ func (c *ImprovedTransactionalCache) GetWithTenant(ctx context.Context, key stri
 }
 
 // Set сохраняет значение в кэше с указанным сроком действия
-func (c *ImprovedTransactionalCache) Set(ctx context.Context, key string, value []byte, expiration time.Duration) error {
+func (c *TransactionalCache) Set(ctx context.Context, key string, value []byte, expiration time.Duration) error {
 	return c.SetWithTenant(ctx, key, value, c.tenantID, expiration)
 }
 
 // SetWithTenant сохраняет значение в кэше с учетом ID арендатора
-func (c *ImprovedTransactionalCache) SetWithTenant(ctx context.Context, key string, value []byte, tenantID string, expiration time.Duration) error {
+func (c *TransactionalCache) SetWithTenant(ctx context.Context, key string, value []byte, tenantID string, expiration time.Duration) error {
 	// Сохраняем в транзакционный кэш
 	c.adapter.mutex.Lock()
 	defer c.adapter.mutex.Unlock()
@@ -281,12 +291,12 @@ func (c *ImprovedTransactionalCache) SetWithTenant(ctx context.Context, key stri
 }
 
 // Delete удаляет значение из кэша по ключу
-func (c *ImprovedTransactionalCache) Delete(ctx context.Context, key string) error {
+func (c *TransactionalCache) Delete(ctx context.Context, key string) error {
 	return c.DeleteWithTenant(ctx, key, c.tenantID)
 }
 
 // DeleteWithTenant удаляет значение из кэша по ключу с учетом ID арендатора
-func (c *ImprovedTransactionalCache) DeleteWithTenant(ctx context.Context, key string, tenantID string) error {
+func (c *TransactionalCache) DeleteWithTenant(ctx context.Context, key string, tenantID string) error {
 	// Помечаем как удаленное в транзакционном кэше
 	c.adapter.mutex.Lock()
 	defer c.adapter.mutex.Unlock()
@@ -311,12 +321,12 @@ func (c *ImprovedTransactionalCache) DeleteWithTenant(ctx context.Context, key s
 }
 
 // DeleteByPattern удаляет все значения, соответствующие шаблону
-func (c *ImprovedTransactionalCache) DeleteByPattern(ctx context.Context, pattern string) error {
+func (c *TransactionalCache) DeleteByPattern(ctx context.Context, pattern string) error {
 	return c.DeleteByPatternWithTenant(ctx, pattern, c.tenantID)
 }
 
 // DeleteByPatternWithTenant удаляет все значения, соответствующие шаблону с учетом ID арендатора
-func (c *ImprovedTransactionalCache) DeleteByPatternWithTenant(ctx context.Context, pattern string, tenantID string) error {
+func (c *TransactionalCache) DeleteByPatternWithTenant(ctx context.Context, pattern string, tenantID string) error {
 	// Это сложная операция, которую мы не можем полностью реализовать в транзакционном кэше
 	// Но мы можем попытаться удалить все ключи, которые соответствуют шаблону
 	// из транзакционного кэша
@@ -348,12 +358,12 @@ func (c *ImprovedTransactionalCache) DeleteByPatternWithTenant(ctx context.Conte
 }
 
 // GetMulti получает несколько значений за один запрос
-func (c *ImprovedTransactionalCache) GetMulti(ctx context.Context, keys []string) (map[string][]byte, error) {
+func (c *TransactionalCache) GetMulti(ctx context.Context, keys []string) (map[string][]byte, error) {
 	return c.GetMultiWithTenant(ctx, keys, c.tenantID)
 }
 
 // GetMultiWithTenant получает несколько значений за один запрос с учетом ID арендатора
-func (c *ImprovedTransactionalCache) GetMultiWithTenant(ctx context.Context, keys []string, tenantID string) (map[string][]byte, error) {
+func (c *TransactionalCache) GetMultiWithTenant(ctx context.Context, keys []string, tenantID string) (map[string][]byte, error) {
 	result := make(map[string][]byte)
 
 	// Сначала проверяем транзакционный кэш
@@ -408,12 +418,12 @@ func (c *ImprovedTransactionalCache) GetMultiWithTenant(ctx context.Context, key
 }
 
 // SetMulti сохраняет несколько значений за один запрос
-func (c *ImprovedTransactionalCache) SetMulti(ctx context.Context, items map[string][]byte, expiration time.Duration) error {
+func (c *TransactionalCache) SetMulti(ctx context.Context, items map[string][]byte, expiration time.Duration) error {
 	return c.SetMultiWithTenant(ctx, items, c.tenantID, expiration)
 }
 
 // SetMultiWithTenant сохраняет несколько значений за один запрос с учетом ID арендатора
-func (c *ImprovedTransactionalCache) SetMultiWithTenant(ctx context.Context, items map[string][]byte, tenantID string, expiration time.Duration) error {
+func (c *TransactionalCache) SetMultiWithTenant(ctx context.Context, items map[string][]byte, tenantID string, expiration time.Duration) error {
 	// Сохраняем все элементы в транзакционный кэш
 	c.adapter.mutex.Lock()
 	defer c.adapter.mutex.Unlock()
@@ -447,12 +457,12 @@ func (c *ImprovedTransactionalCache) SetMultiWithTenant(ctx context.Context, ite
 }
 
 // Increment увеличивает числовое значение ключа на указанную величину
-func (c *ImprovedTransactionalCache) Increment(ctx context.Context, key string, delta int64) (int64, error) {
+func (c *TransactionalCache) Increment(ctx context.Context, key string, delta int64) (int64, error) {
 	return c.IncrementWithTenant(ctx, key, c.tenantID, delta)
 }
 
 // IncrementWithTenant увеличивает числовое значение ключа с учетом ID арендатора
-func (c *ImprovedTransactionalCache) IncrementWithTenant(ctx context.Context, key string, tenantID string, delta int64) (int64, error) {
+func (c *TransactionalCache) IncrementWithTenant(ctx context.Context, key string, tenantID string, delta int64) (int64, error) {
 	// Получаем текущее значение
 	value, err := c.GetWithTenant(ctx, key, tenantID)
 	if err != nil && !errors.Is(err, ports.ErrCacheMiss) {
@@ -495,12 +505,12 @@ func (c *ImprovedTransactionalCache) IncrementWithTenant(ctx context.Context, ke
 }
 
 // Lock пытается получить блокировку с указанным ключом
-func (c *ImprovedTransactionalCache) Lock(ctx context.Context, key string, expiration time.Duration) (bool, error) {
+func (c *TransactionalCache) Lock(ctx context.Context, key string, expiration time.Duration) (bool, error) {
 	return c.LockWithTenant(ctx, key, c.tenantID, expiration)
 }
 
 // LockWithTenant пытается получить блокировку с учетом ID арендатора
-func (c *ImprovedTransactionalCache) LockWithTenant(ctx context.Context, key string, tenantID string, expiration time.Duration) (bool, error) {
+func (c *TransactionalCache) LockWithTenant(ctx context.Context, key string, tenantID string, expiration time.Duration) (bool, error) {
 	// Проверяем, есть ли блокировка в транзакционном кэше
 	lockKey := "lock:" + key
 
@@ -552,12 +562,12 @@ func (c *ImprovedTransactionalCache) LockWithTenant(ctx context.Context, key str
 }
 
 // Unlock освобождает блокировку
-func (c *ImprovedTransactionalCache) Unlock(ctx context.Context, key string) error {
+func (c *TransactionalCache) Unlock(ctx context.Context, key string) error {
 	return c.UnlockWithTenant(ctx, key, c.tenantID)
 }
 
 // UnlockWithTenant освобождает блокировку с учетом ID арендатора
-func (c *ImprovedTransactionalCache) UnlockWithTenant(ctx context.Context, key string, tenantID string) error {
+func (c *TransactionalCache) UnlockWithTenant(ctx context.Context, key string, tenantID string) error {
 	// Помечаем как удаленное в транзакционном кэше
 	lockKey := "lock:" + key
 
@@ -584,7 +594,7 @@ func (c *ImprovedTransactionalCache) UnlockWithTenant(ctx context.Context, key s
 }
 
 // Close закрывает соединение с системой кэширования
-func (c *ImprovedTransactionalCache) Close() error {
+func (c *TransactionalCache) Close() error {
 	// Ничего не делаем, так как закрытие будет выполнено на уровне базового кэша
 	return nil
 }

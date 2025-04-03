@@ -52,42 +52,39 @@ type ProductMedia struct {
 // ProductFilter представляет структурированную модель для фильтрации продуктов
 type ProductFilter struct {
 	// Основные поля фильтрации
-	ID           string   `json:"id,omitempty"`
-	SupplierID   int      `json:"supplier_id,omitempty"`
-	Name         string   `json:"name,omitempty"`
-	Description  string   `json:"description,omitempty"`
-	CategoryID   string   `json:"category_id,omitempty"`
-	CategoryIDs  []string `json:"category_ids,omitempty"`
+	ID          string   `json:"id,omitempty"`
+	SupplierID  int      `json:"supplier_id,omitempty"`
+	Name        string   `json:"name,omitempty"`
+	Description string   `json:"description,omitempty"`
+	CategoryID  string   `json:"category_id,omitempty"`
+	CategoryIDs []string `json:"category_ids,omitempty"`
 
 	// Фильтрация по цене
-	MinPrice     float64  `json:"min_price,omitempty"`
-	MaxPrice     float64  `json:"max_price,omitempty"`
+	MinPrice float64 `json:"min_price,omitempty"`
+	MaxPrice float64 `json:"max_price,omitempty"`
 
 	// Фильтрация по инвентарю
-	InStock      *bool    `json:"in_stock,omitempty"`
-	MinStock     int      `json:"min_stock,omitempty"`
+	InStock  *bool `json:"in_stock,omitempty"`
+	MinStock int   `json:"min_stock,omitempty"`
 
 	// Фильтрация по статусу
-	Status       string   `json:"status,omitempty"`
-	Statuses     []string `json:"statuses,omitempty"`
+	Status   string   `json:"status,omitempty"`
+	Statuses []string `json:"statuses,omitempty"`
 
 	// Фильтрация по времени
-	CreatedAfter  int64   `json:"created_after,omitempty"`  // Unix timestamp
-	CreatedBefore int64   `json:"created_before,omitempty"` // Unix timestamp
-	UpdatedAfter  int64   `json:"updated_after,omitempty"`  // Unix timestamp
-	UpdatedBefore int64   `json:"updated_before,omitempty"` // Unix timestamp
+	CreatedAfter  int64 `json:"created_after,omitempty"`  // Unix timestamp
+	CreatedBefore int64 `json:"created_before,omitempty"` // Unix timestamp
+	UpdatedAfter  int64 `json:"updated_after,omitempty"`  // Unix timestamp
+	UpdatedBefore int64 `json:"updated_before,omitempty"` // Unix timestamp
 
 	// Фильтрация по маркетплейсам
-	MarketplaceID int     `json:"marketplace_id,omitempty"`
+	MarketplaceID int `json:"marketplace_id,omitempty"`
 
 	// Полнотекстовый поиск
-	SearchQuery   string  `json:"search_query,omitempty"`
+	SearchQuery string `json:"search_query,omitempty"`
 
 	// Произвольные атрибуты для фильтрации
-	Attributes    map[string]interface{} `json:"attributes,omitempty"`
-
-	// Преобразует фильтр в map для использования в запросах
-	ToMap() map[string]interface{}
+	Attributes map[string]interface{} `json:"attributes,omitempty"`
 }
 
 // ToMap преобразует ProductFilter в map для использования в запросах
@@ -177,8 +174,8 @@ func (f *ProductFilter) ToMap() map[string]interface{} {
 
 // Pagination представляет расширенную модель для пагинации
 type Pagination struct {
-	Page       int    `json:"page"`       // Номер страницы (начиная с 1)
-	PageSize   int    `json:"page_size"`  // Размер страницы
+	Page       int    `json:"page"`        // Номер страницы (начиная с 1)
+	PageSize   int    `json:"page_size"`   // Размер страницы
 	TotalItems int64  `json:"total_items"` // Общее количество элементов
 	TotalPages int    `json:"total_pages"` // Общее количество страниц
 	SortBy     string `json:"sort_by"`     // Поле для сортировки
@@ -208,7 +205,6 @@ func NewPagination(page, pageSize int, sortBy string, sortDesc bool) *Pagination
 		HasPrev:    false,
 	}
 }
-
 
 // SetTotal устанавливает общее количество элементов и пересчитывает зависимые поля
 func (p *Pagination) SetTotal(totalItems int64) {
@@ -242,7 +238,6 @@ func (p *Pagination) GetSortOrder() string {
 	return p.SortBy + " " + direction
 }
 
-
 // PagedResult представляет результат запроса с пагинацией
 type PagedResult struct {
 	Items      interface{} `json:"items"`      // Элементы текущей страницы
@@ -259,24 +254,24 @@ func NewPagedResult(items interface{}, pagination *Pagination) *PagedResult {
 
 // ProductCategory представляет категорию продуктов
 type ProductCategory struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Description  string   `json:"description,omitempty"`
-	ParentID     string   `json:"parent_id,omitempty"`
-	Level        int      `json:"level"`
-	Path         string   `json:"path"`
-	ImageURL     string   `json:"image_url,omitempty"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	Description   string   `json:"description,omitempty"`
+	ParentID      string   `json:"parent_id,omitempty"`
+	Level         int      `json:"level"`
+	Path          string   `json:"path"`
+	ImageURL      string   `json:"image_url,omitempty"`
 	SubCategories []string `json:"sub_categories,omitempty"`
 }
 
 // ProductHistoryRecord представляет запись в истории изменений продукта
 type ProductHistoryRecord struct {
-	ID             string          `json:"id"`
-	ProductID      string          `json:"product_id"`
-	ChangeType     string          `json:"change_type"` // "create", "update", "delete"
-	Before         *Product `json:"before,omitempty"`
-	After          *Product `json:"after,omitempty"`
-	ChangedBy      string          `json:"changed_by,omitempty"`
-	ChangedAt      int64           `json:"changed_at"`
-	ChangeComment  string          `json:"change_comment,omitempty"`
+	ID            string   `json:"id"`
+	ProductID     string   `json:"product_id"`
+	ChangeType    string   `json:"change_type"` // "create", "update", "delete"
+	Before        *Product `json:"before,omitempty"`
+	After         *Product `json:"after,omitempty"`
+	ChangedBy     string   `json:"changed_by,omitempty"`
+	ChangedAt     int64    `json:"changed_at"`
+	ChangeComment string   `json:"change_comment,omitempty"`
 }

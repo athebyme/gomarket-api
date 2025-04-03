@@ -3,8 +3,8 @@ package mock
 import (
 	"context"
 	"fmt"
-	"gomarketplace_api/internal/infrastructure/transactions/interfaces"
-	"gomarketplace_api/internal/infrastructure/transactions/options"
+	"gomarketplace_api/internal/infrastructure/transactional/transactions/interfaces"
+	"gomarketplace_api/internal/infrastructure/transactional/transactions/options"
 	"sync"
 
 	"github.com/google/uuid"

@@ -5,9 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 	"gomarketplace_api/internal/core/ports"
-	"gomarketplace_api/internal/infrastructure/transactions"
-	"gomarketplace_api/internal/infrastructure/transactions/interfaces"
-	"gomarketplace_api/internal/infrastructure/transactions/options"
+	"gomarketplace_api/internal/infrastructure/transactional/transactions"
+	"gomarketplace_api/internal/infrastructure/transactional/transactions/interfaces"
+	"gomarketplace_api/internal/infrastructure/transactional/transactions/options"
 	"sync"
 	"time"
 

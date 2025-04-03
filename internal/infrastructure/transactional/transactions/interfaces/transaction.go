@@ -1,6 +1,6 @@
 package interfaces
 
-import "gomarketplace_api/internal/infrastructure/transactions/options"
+import "gomarketplace_api/internal/infrastructure/transactional/transactions/options"
 
 // Transaction определяет интерфейс для работы с конкретной транзакцией
 type Transaction interface {

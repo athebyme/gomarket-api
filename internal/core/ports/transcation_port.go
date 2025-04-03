@@ -6,6 +6,9 @@ import (
 	"gomarketplace_api/internal/infrastructure/transactions/options"
 )
 
+// TransactionKey - ключ для хранения транзакции в контексте
+type TransactionKey struct{}
+
 // TransactionPort расширяет обычный TransactionManager, добавляя поддержку для
 // распределенных транзакций и интеграцию с другими портами системы
 type TransactionPort interface {
@@ -55,16 +58,12 @@ type TransactionalPorts struct {
 
 // TransactionalStoragePort расширяет StoragePort, добавляя методы для работы с транзакциями
 type TransactionalStoragePort interface {
-	StoragePort
-
 	// WithTransaction возвращает хранилище, связанное с указанной транзакцией
 	WithTransaction(tx interfaces.Transaction) StoragePort
 }
 
 // TransactionalCachePort расширяет CachePort, добавляя методы для работы с транзакциями
 type TransactionalCachePort interface {
-	CachePort
-
 	// WithTransaction возвращает кэш, связанный с указанной транзакцией
 	WithTransaction(tx interfaces.Transaction) CachePort
 
@@ -74,8 +73,6 @@ type TransactionalCachePort interface {
 
 // TransactionalMessagingPort расширяет MessagingPort, добавляя методы для работы с транзакциями
 type TransactionalMessagingPort interface {
-	MessagingPort
-
 	// WithTransaction возвращает брокер сообщений, связанный с указанной транзакцией
 	WithTransaction(tx interfaces.Transaction) MessagingPort
 

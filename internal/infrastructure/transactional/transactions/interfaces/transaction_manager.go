@@ -2,7 +2,7 @@ package interfaces
 
 import (
 	"context"
-	"gomarketplace_api/internal/infrastructure/transactions/options"
+	"gomarketplace_api/internal/infrastructure/transactional/transactions/options"
 )
 
 // TransactionOperation определяет функцию, которая будет выполнена в транзакции
